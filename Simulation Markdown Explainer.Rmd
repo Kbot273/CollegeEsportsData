@@ -1,0 +1,289 @@
+---
+title: "Rocket League SDPG Simulation"
+author: "Kenneth Kresina"
+date: "2025-05-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Goal & Setup
+
+This is a document outlining the process used for simulating Best-of-5 *Rocket League* matches looking for score differential: the difference in score between two competing teams. In essence, the simulation skips simulating the number of goals each team scores and only simulates the difference in score for two teams.
+
+Obviously, you need the means to run R script to be able to play with this document. Luckily, R and RStudio are both free downloads.
+
+To read the full explainer on this and the implications, please check out my Medium article.
+
+```{r libraries}
+library(greybox)
+library(ggplot2)
+library(scales)
+```
+
+## Setting Parameters
+
+This block will set the parameters for our simulation. Here, we can change the number of matches $n$, what we call our odds (which will have an impact on the title of the charts alone), the standard deviation of the score differential $\sigma$, and the sample number. To change the odds of the teams playing against each other, see the first few lines of the simulation loop code.
+
+```{r parameters}
+sigma <- 2.5
+skill_diff_odds <- "'Norm Skill Gap'"
+samp <- 0
+n <- 50
+```
+
+As one more setup tool, we will call a blank data frame where our matches will be generated.
+
+```{r dataframe setup}
+samp <- samp + 1
+SDPG.SIMUL <- list(n)
+matches <- data.frame(GM1 = numeric(n),
+                      GM2 = numeric(n),
+                      GM3 = numeric(n),
+                      GM4 = numeric(n),
+                      GM5 = numeric(n))
+```
+
+## Simulating Matches
+
+Now it's time to make the simulation happen. However, first we can adjust the odds for any given team winning. The way I have this set up is the variable `low_team_odds` is the probability that there would be a negative score differential. (One team will win if the score differential is positive, and the other wins if it is negative.
+
+You can see in the first few lines that there are multiple different settings that you could use. To explore them:
+
+-   `low_team_odds <- 0.5` Sets a static number for the odds in decimal form. This number can be adjusted accordingly depending on what odds you want to observe, and was used in Figure 1.3.
+
+-   `low_team_odds <- rnorm(1, .5, .15)` Sets the odds to be a normal distribution itself, where it is more likely that the odds are close to 50% for each team, but may vary. I would argue that this is close to what we should be striving for in our formats. This was used in Figure 1.4.
+
+-   `low_team_odds <- runif(1,0,1)` Sets the odds to be a uniform distribution, where there is an equal chance of any particular odds. This was used in Figure 1.5.
+
+-   `low_team_odds <- rbeta(1, .5, .5)` Sets the odds to be a beta distribution, where there is a higher chance of more extreme odds and a lesser chance of middling odds. This was used in Figure 1.6 and would represent an incredibly imbalanced league.
+
+-   You could theoretically set this to any other distribution or value you wanted, primarily prioritizing values between 0 and 1. There is a check in the loop that was built out for the normal distribution's extreme cases, but otherwise is not meant to be relied upon (else you would have some very lopsided matches).
+
+For the rest of this block, I've left comments in the code itself to show you step by step what is happening. The general process is:
+
+1.  The distribution of score differential for the match is established based upon the provided `low_team_odds` for that particular match as well as the initial $\sigma$ value provided.
+
+2.  Three values are pulled from the score differential distribution and stored.
+
+3.  A "victor" indicator value of $+1$ or $-1$ is established for each game to determine which team "won" based on whether the random value was positive or negative.
+
+4.  The random value is converted into the score differential by rounding the number to the nearest integer and then adding the victor indicator (Note that adding a negative number to a negative number makes the number further negative, thus the true score differential will always be an integer and be nonzero).
+
+5.  A quick calculation is performed to see how many games each team has won. If neither team has won 3 games, a 4th game will be simulated with a 4th random value from the distribution. If after game 4 neither team has won 3 games, a 5th game will be simulated.
+
+6.  Now that all score differentials have been generated for each game in the match, the SDPG for that match is calculated by summing the score differentials in each game and dividing by the number of games played.
+
+7.  The score differentials for each game, the SDPG, and the odds used are all stored in the dataframe `matches`. The loop repeats $n$ times, storing a new line in the `matches` dataframe.
+
+```{r simulation}
+for(i in 1:n) {
+  # Set low_team_odds to your desired setting per match. This is the odds that the team who must get a negative
+  # score differential to win will do so.
+  low_team_odds <-  rnorm(1,.5,.15) #runif(1,0,1)  #rbeta(1,.5,.5) #.5
+  
+  #brief check for abnormal values, otherwise the simulation breaks
+  if (low_team_odds <= 0){
+    low_team_odds <- 0.000001
+  }
+  if (low_team_odds >= 1){
+    low_team_odds <- 0.999999
+  }
+  #pull the adjustment to the score differential distribution based on the selected odds
+  skill_diff <- -1*qnorm(low_team_odds,0,sigma)
+  
+  # Select randomized value that samples population for score differential in each game
+  rand1 <- rnorm(1,skill_diff,sigma)
+  rand2 <- rnorm(1,skill_diff,sigma)
+  rand3 <- rnorm(1,skill_diff,sigma)
+  rand4 <- NA
+  rand5 <- NA
+  
+  # Determine a value for which team wins each game
+  victorval1 <- (rand1)*(1/abs(rand1))
+  victorval2 <- (rand2)*(1/abs(rand2))
+  victorval3 <- (rand3)*(1/abs(rand3))
+  victorval4 <- NA
+  victorval5 <- NA
+  
+  # Calculate the actual score differential, rounding the random value
+  gm1.score <- trunc(rand1) + victorval1
+  gm2.score <- trunc(rand2) + victorval2
+  gm3.score <- trunc(rand3) + victorval3
+  gm4.score <- NA
+  gm5.score <- NA
+  
+  # Determine number of games won by each team
+  team.a.games <- victorval1*0.5+0.5 + 
+    victorval2*0.5+0.5 +
+    victorval3*0.5+0.5
+  team.b.games <- 3 - team.a.games
+  
+  # Evaluate if game 4 should be played
+  if(team.a.games<3 && team.b.games<3) {
+    rand4 <- rnorm(1,skill_diff,sigma)
+    victorval4 <- (rand4)*(1/abs(rand4))
+    gm4.score <- trunc(rand4) + victorval4
+    team.a.games <- team.a.games + victorval4*0.5+0.5
+    team.b.games <- 4 - team.a.games
+  }
+  # Evaluate if game 5 should be played
+  if(team.a.games<3 && team.b.games<3){
+    rand5 <- rnorm(1,skill_diff,sigma)
+    victorval5 <- (rand5)*(1/abs(rand5))
+    gm5.score <- trunc(rand5) + victorval5
+    team.a.games <- team.a.games + victorval5*0.5+0.5
+    team.b.games <- 5 - team.a.games
+  }
+  # Calculate and store SDPG for current series
+  games <- c(gm1.score, gm2.score, gm3.score, gm4.score, gm5.score)
+  cur.sdpg <- abs(sum(games, na.rm = TRUE))/(5-sum(is.na(games)))
+  SDPG.SIMUL[i] <- cur.sdpg
+  
+  # Store score differential values
+  matches$skill_diff[i] <- low_team_odds
+  matches$GM1[i] <- gm1.score
+  matches$GM2[i] <- gm2.score
+  matches$GM3[i] <- gm3.score
+  matches$GM4[i] <- gm4.score
+  matches$GM5[i] <- gm5.score
+  
+  # Count number of games in each simulated match
+  matches$GMCount[i] <- 5 - sum(is.na(matches[i,]))
+  
+  matches$SDPG[i] <- cur.sdpg
+}
+```
+
+Have no fear: that was the longest block. Perhaps there was a more elegant way to do this, but this is what I constructed. If you'd like to view some of your simulated matches, you can do so with this one:
+
+```{r view matches}
+matches
+```
+
+To get a sense for the variability and randomness of your parameters, you might consider running the simulation from the block above through the plots a few times.
+
+## Prepare to Plot
+
+This block makes some final calculations on the dataset as a whole and prepares to plot it, loading it into dummy variables often used in the GGPlot world. The block also completes our standard deviation calculations. The standard deviation calculation is based on a mean value of 0, which is the approximation or assumption used for the half-normal distribution.
+
+Secondly, we will also remove any outliers from the data and recalculate the standard deviation. This distinction isn't very important in this simulation, but might be important when we look at real data.
+
+```{r prep}
+# Load into dummy variables for plotting
+df <- data.frame(SDPG = unlist(SDPG.SIMUL))
+
+# Calculate the initial standard deviation
+sd <- sd(df$SDPG)
+sd_calc <- mean(df$SDPG**2)**0.5
+
+# Perform corrected standard deviation calculation
+squares <- df$SDPG**2
+sd_calc <- mean(squares,na.rm=TRUE)**0.5
+squares_corr <- df$SDPG[df$SDPG<=3*sd_calc] ** 2
+sd_corr <- mean(squares_corr,na.rm=TRUE)**0.5
+```
+
+## SDPG Plot
+
+It's finally time to plot our beautiful data!
+
+```{r sdpg plot}
+ggplot(df,aes(x=SDPG)) + 
+  geom_histogram(aes(y=after_stat(density)),binwidth=1,center=0.5,
+                 fill='navy',color='white') +
+  stat_function(fun=dfnorm,args=list(mu=0, sigma = sd_calc),color="red3",size=2) +
+  stat_function(fun=dfnorm,args=list(mu=0, sigma = sd_corr),color="green3",size=2) +
+  geom_density(color='cyan3',size=2) +
+  stat_bin(aes(y=after_stat(density),
+               label=paste0(100*round(after_stat(density),2),"%")), 
+           geom='label',binwidth=1,center=0.5,color='white',size=4,
+           position=position_stack(vjust=0.5),fill='gray24') +
+  labs(title=paste(c("Randomized Sample ",samp," SDPG; Odds ",skill_diff_odds ,
+                     " (n=",length(SDPG.SIMUL),", sd=",round(sd_calc,2),
+                     ", sd'=",round(sd_corr,2),")"),sep="",collapse=''),) + 
+  xlab("Score Differential per Game in Series")  +
+  theme(plot.title = element_text(size=11,face="bold"))
+```
+
+Here are a few things to note about this plot.
+
+-   The blue bars in the background represent the number of matches that fall between those SDPG values, with integers including to the lower bin. You can also see a percentage that represents the % of matches that fall into each bin.
+
+-   The cyan line indicates the distribution probability function applied to the data from GGPlot. I'd be lying if I said I knew exactly how this works, but it gives us another reference point to compare.
+
+-   The red line indicates the expected half-normal distribution when considering any outliers, based on **sd** `(sd_calc)`. If there is no red line, it means that the data did not contain any outliers more than 3 standard deviations outside of 0.
+
+-   The green line indicated the expected half-normal distribution without considering outliers, based on **sd'** `(sd_corr).`
+
+By comparing the simulated cyan distributions to the green line, we can get a sense for what is within the realm of "random chance" for data to appear for a league with size $n$ matches and the probability distribution given by `low_team_odds`.
+
+## SDPG Normalized Plot
+
+The best check that I can perform at the moment to more clearly see whether these data fall within an expected realm of plausibility is to look at the normalized SDPG plot - that is, the percentage of the SDPG distribution that falls within each standard deviation **sd'** `(sd_corr)` away from 0. Basic statistics tell us that as $n \rightarrow \infty$, these numbers should be close to 69%, 26%, 4%, and \>1% for each bin.
+
+```{r SDPG Normalized Plot}
+df$SDPGnorm <- df$SDPG/sd_corr
+ggplot(df,aes(x=SDPGnorm)) + 
+  geom_histogram(aes(y=after_stat(density)),binwidth=1,center=0.5,fill='navy',
+                 color='white') +
+  stat_function(fun=dfnorm,args=list(mu=0, sigma = sd_calc/sd_corr),
+                color="red3",size=2) +
+  stat_function(fun=dfnorm,args=list(mu=0, sigma = 1),color="green3",size=2) +
+  geom_density(color='cyan3',size=2) +
+  stat_bin(aes(y=after_stat(density),
+               label=paste0(100*round(after_stat(density),2),"%")), geom='label',
+           binwidth=1,center=0.5,color='white',size=5,
+           position=position_stack(vjust=0.5),fill='gray24') +
+  labs(title=paste(c("Randomized Sample ",samp," SDPG; Odds ",skill_diff_odds ,
+                     " Normalized (n=",length(SDPG.SIMUL),
+                     ", sd=",round(sd_calc,2),", sd'=",round(sd_corr,2),")"),
+                   sep="",collapse='')) + xlab("SDPG / sd'")  + 
+  theme(plot.title = element_text(size=10,face="bold"))
+```
+
+## Games Played Plot
+
+This plot will simply show you the number of matches that had 3, 4, or 5 games. This is our most intuitive measure of skill disparity (game differential), though doesn't really follow any statistical predictors or methods.
+
+```{r Games Played}
+counts <- table(matches$GMCount)
+percentages <- counts/sum(counts)*100
+
+df3 <- data.frame(`Game Count` = names(counts), count = as.numeric(counts), percentage = percentages)
+
+ggplot(df3, aes(x = Game.Count, y=count)) + 
+  geom_bar(stat="identity", fill='navy', color='white') +
+  geom_label(aes(y=count/2, label=paste0(round(percentage.Freq, 1), "%")), 
+             stat="identity", size = 5, color = 'white', fill='gray20') + 
+  labs(title=paste(c("Randomized Sample ", samp," Games Played Per Series (n=",
+                     n,")"),
+                   sep="",collapse='')) + xlab("Games Played") + 
+  theme(plot.title = element_text(size=11,face="bold"))
+```
+
+## Score Differential Plot
+
+Lastly, we can see what it looks like to plot the raw score differentials from every game played in every match. This is plot is a little less helpful, but it can help us visualize the ideas presented better. We also can see the issues with comparing the score differential to a normal distribution.
+
+```{r Score Diff}
+df2 <- data.frame(c(matches$GM1,matches$GM2,matches$GM3,matches$GM4,matches$GM5))
+names(df2) <- c("Games")
+
+gd_sd <- sd(df2$Games, na.rm=TRUE)
+
+ggplot(df2,aes(x=Games)) + 
+  geom_histogram(aes(y=after_stat(density)),binwidth=1,fill='navy',color='white') +
+  geom_density(color='cyan3',size=2) + 
+  stat_function(fun=dnorm,args=list(mean=0,sd=sd_calc),color="red3",size=2) + 
+  stat_bin(aes(y=after_stat(density),
+               label=paste0(100*round(after_stat(density),2),"%")), 
+           geom='label',binwidth=1,center=0,
+           color='white',size=4,position=position_stack(vjust=0.5),fill='gray24') +
+  labs(title=paste(c("Randomized Simulation ",samp, " Score Differential (n=", 
+                     sum(!is.na(df2$Games)), ", sd=", round(gd_sd,2),")"), 
+                   sep="",collapse='')) + xlab("Score Differential") + 
+  theme(plot.title = element_text(size=11,face="bold"))
+```
